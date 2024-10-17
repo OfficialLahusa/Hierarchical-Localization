@@ -1,3 +1,6 @@
+# Notes (Lasse):
+# Applied PR https://github.com/cvg/Hierarchical-Localization/pull/344 to implement mask support
+
 import argparse
 import collections.abc as collections
 import glob
@@ -12,6 +15,7 @@ import numpy as np
 import PIL.Image
 import torch
 from tqdm import tqdm
+from skimage.morphology import erosion, disk
 
 from . import extractors, logger
 from .utils.base_model import dynamic_load
@@ -164,9 +168,10 @@ class ImageDataset(torch.utils.data.Dataset):
         "interpolation": "cv2_area",  # pil_linear is more accurate but slower
     }
 
-    def __init__(self, root, conf, paths=None):
+    def __init__(self, root, conf, paths=None, mask_dir: Optional[Path]=None):
         self.conf = conf = SimpleNamespace(**{**self.default_conf, **conf})
         self.root = root
+        self.mask_dir = mask_dir
 
         if paths is None:
             paths = []
@@ -212,6 +217,16 @@ class ImageDataset(torch.utils.data.Dataset):
             "image": image,
             "original_size": np.array(size),
         }
+
+        if self.mask_dir:
+            mask_path = self.mask_dir / name
+            if mask_path.exists():
+                # TODO: Check if erosion reduced faulty keypoints near animals.
+                mask_img = read_image(mask_path, True)
+                data["mask"] = erosion(mask_img, disk(4))
+            else:
+                raise ValueError(f"Mask \"{mask_path}\" doesn't exist.")
+
         return data
 
     def __len__(self):
@@ -227,12 +242,13 @@ def main(
     image_list: Optional[Union[Path, List[str]]] = None,
     feature_path: Optional[Path] = None,
     overwrite: bool = False,
+    mask_dir: Optional[Path] = None
 ) -> Path:
     logger.info(
         "Extracting local features with configuration:" f"\n{pprint.pformat(conf)}"
     )
 
-    dataset = ImageDataset(image_dir, conf["preprocessing"], image_list)
+    dataset = ImageDataset(image_dir, conf["preprocessing"], image_list, mask_dir)
     if feature_path is None:
         feature_path = Path(export_dir, conf["output"] + ".h5")
     feature_path.parent.mkdir(exist_ok=True, parents=True)
@@ -265,6 +281,23 @@ def main(
                 pred["scales"] *= scales.mean()
             # add keypoint uncertainties scaled to the original resolution
             uncertainty = getattr(model, "detection_noise", 1) * scales.mean()
+
+            if 'mask' in data:
+                mask = data['mask'][0] # because batch_size == 1
+
+                # Index mask using pixel positions of predicted keypoints.
+                valid_keypoint = mask[pred['keypoints'][:, 1].astype('int'),
+                                      pred['keypoints'][:, 0].astype('int')]
+
+                # Only use entries with non-black mask values.
+                pred['keypoints'] = pred['keypoints'][valid_keypoint > 0]
+                pred['descriptors'] = pred['descriptors'][:, valid_keypoint > 0]
+
+                # Keypoint score key depends on extraction algorithm choice.
+                if "scores" in pred:
+                    pred['scores'] = pred['scores'][valid_keypoint > 0]
+                else:
+                    pred['keypoint_scores'] = pred['keypoint_scores'][valid_keypoint > 0]
 
         if as_half:
             for k in pred:
@@ -306,5 +339,6 @@ if __name__ == "__main__":
     parser.add_argument("--as_half", action="store_true")
     parser.add_argument("--image_list", type=Path)
     parser.add_argument("--feature_path", type=Path)
+    parser.add_argument("--mask_dir", type=Path)
     args = parser.parse_args()
-    main(confs[args.conf], args.image_dir, args.export_dir, args.as_half)
+    main(confs[args.conf], args.image_dir, args.export_dir, args.as_half, mask_dir = args.mask_dir)
