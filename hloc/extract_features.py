@@ -221,9 +221,8 @@ class ImageDataset(torch.utils.data.Dataset):
         if self.mask_dir:
             mask_path = self.mask_dir / name
             if mask_path.exists():
-                # TODO: Check if erosion reduced faulty keypoints near animals.
                 mask_img = read_image(mask_path, True)
-                data["mask"] = erosion(mask_img, disk(4))
+                data["mask"] = erosion(mask_img, disk(6))
             else:
                 raise ValueError(f"Mask \"{mask_path}\" doesn't exist.")
 
