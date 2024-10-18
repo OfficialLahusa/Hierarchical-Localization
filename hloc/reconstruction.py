@@ -1,4 +1,7 @@
+import sys
 import argparse
+import shlex
+import subprocess
 import multiprocessing
 import shutil
 from pathlib import Path
@@ -103,6 +106,46 @@ def run_reconstruction(
     return reconstructions[largest_index]
 
 
+def run_glomap_reconstruction(
+    sfm_dir: Path,
+    database_path: Path,
+    image_dir: Path,
+    verbose: bool = False,
+    options: Optional[Dict[str, Any]] = None,
+) -> pycolmap.Reconstruction:
+    # Move up from "./colmap/sparse/0/" to "./glomap/"
+    # This assumes nerfstudio's default colmap path.
+    output_path = sfm_dir.parent.parent.parent / "glomap"
+    logger.info("GLOMAP reconstruction output path: \"%s\"", output_path)
+
+    glomap_cmd = [
+        "glomap", "mapper",
+           "--database_path",   shlex.quote(str(database_path)),
+           "--image_path",      shlex.quote(str(image_dir)),
+           "--output_path",     shlex.quote(str(output_path))
+    ]
+
+    print(glomap_cmd)
+
+    # Hide cursor.
+    print('\033[?25l', end="")
+
+    # Get GLOMAP output in real time and print it to STDOUT.
+    with subprocess.Popen(glomap_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
+        for c in iter(lambda: proc.stdout.read(1), b""):
+            sys.stdout.write(c.decode(sys.stdout.encoding))
+
+    # Unhide cursor.
+    print('\033[?25h', end="")
+
+    reconstruction = pycolmap.Reconstruction()
+    reconstruction.read(str(output_path / "0"))
+
+    logger.info("Model has %i images.", reconstruction.num_reg_images())
+
+    return reconstruction
+
+
 def main(
     sfm_dir: Path,
     image_dir: Path,
@@ -116,6 +159,7 @@ def main(
     image_list: Optional[List[str]] = None,
     image_options: Optional[Dict[str, Any]] = None,
     mapper_options: Optional[Dict[str, Any]] = None,
+    use_glomap: bool = False  # Use GLOMAP instead of COLMAP for reconstruction.
 ) -> pycolmap.Reconstruction:
     assert features.exists(), features
     assert pairs.exists(), pairs
@@ -138,9 +182,23 @@ def main(
     )
     if not skip_geometric_verification:
         estimation_and_geometric_verification(database, pairs, verbose)
-    reconstruction = run_reconstruction(
-        sfm_dir, database, image_dir, verbose, mapper_options
-    )
+
+    # Reconstruct using GLOMAP.
+    if use_glomap:
+        # Abort if GLOMAP wasn't found in PATH.
+        if shutil.which("glomap") is None:
+            logger.error("GLOMAP was not found in PATH. Make sure it is installed correctly.")
+            sys.exit(1)
+
+        reconstruction = run_glomap_reconstruction(
+            sfm_dir, database, image_dir, verbose, mapper_options
+        )
+    # Reconstruct using COLMAP.
+    else:
+        reconstruction = run_reconstruction(
+            sfm_dir, database, image_dir, verbose, mapper_options
+        )
+
     if reconstruction is not None:
         logger.info(
             f"Reconstruction statistics:\n{reconstruction.summary()}"
