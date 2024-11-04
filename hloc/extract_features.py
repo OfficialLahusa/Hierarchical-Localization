@@ -73,7 +73,7 @@ confs = {
         "output": "feats-r2d2-n5000-r1024",
         "model": {
             "name": "r2d2",
-            "max_keypoints": 5000,
+            #"max_keypoints": 5000,
         },
         "preprocessing": {
             "grayscale": False,
@@ -111,7 +111,7 @@ confs = {
         "output": "feats-disk",
         "model": {
             "name": "disk",
-            "max_keypoints": 5000,
+            #"max_keypoints": 5000,
         },
         "preprocessing": {
             "grayscale": False,
