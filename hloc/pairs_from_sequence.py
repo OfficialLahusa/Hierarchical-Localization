@@ -13,7 +13,7 @@ def main(
         output: Path,
         image_list: Optional[Union[Path, List[str]]] = None,
         features: Optional[Path] = None,
-        overlap: Optional[int] = 8,
+        overlap: Optional[int] = 15,
         quadratic_overlap: bool = True):
 
     if image_list is not None:
